@@ -20,13 +20,14 @@ protected:
 	virtual void BeginPlay() override;
 
 public:	
+	virtual void GetLifetimeReplicatedProps( TArray< FLifetimeProperty > & OutLifetimeProps ) const override;
+	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	
 private:
 	FVector GetAirResistance();
 	FVector GetRollingResistance();
@@ -56,11 +57,23 @@ private:
 	float RollingResistanceCoefficient = 0.015;
 
 	void MoveForward(float Value);
-
 	void MoveRight(float Value);
+	
+	// (_Implementation을)서버에서 실행하라고 요청하는 RPC, 클라이언트에서 실행
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_MoveForward(float Value);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_MoveRight(float Value);
 
 	FVector Velocity;
 
+	UPROPERTY( ReplicatedUsing = OnRep_ReplicatedTransform)
+	FTransform ReplicatedTransform;
+
+	UFUNCTION()
+	void OnRep_ReplicatedTransform();
+	
 	float Throttle;
 	float SteeringThrow;
 
