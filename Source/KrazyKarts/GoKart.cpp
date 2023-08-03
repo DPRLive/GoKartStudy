@@ -47,7 +47,7 @@ void AGoKart::BeginPlay()
 void AGoKart::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(AGoKart, ReplicatedTransform); // 이러면 서버에서 설정될 때마다 클라이언트들이 받게된다.
+	DOREPLIFETIME(AGoKart, ServerState); // 이러면 서버에서 설정될 때마다 클라이언트들이 받게된다.
 }
 
 // Called every frame
@@ -55,33 +55,46 @@ void AGoKart::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	FVector Force = GetActorForwardVector() * MaxDrivingForce * Throttle;
-
-	Force += GetAirResistance();
-	Force += GetRollingResistance();
-
-	FVector Acceleration = Force / Mass;
-
-	Velocity = Velocity + Acceleration * DeltaTime;
-
-	ApplyRotation(DeltaTime);
-
-	UpdateLocationFromVelocity(DeltaTime);
-
-	if(HasAuthority())
+	if(IsLocallyControlled()) // 로컬이라면
 	{
-		// 서버면 위치를 복제한다.
-		ReplicatedTransform = GetActorTransform();
+		FGoKartMove Move;
+		Move.DeltaTime = DeltaTime; // 설정된 정보들을 담아
+		Move.SteeringThrow = SteeringThrow;
+		Move.Throttle = Throttle;
+		// TODO : SetTime
+
+		Server_SendMove(Move); // 서버에게 새로 만든 move를 보낸다
+		
+		// 나는 move를 시뮬레이트한다
+		SimulateMove(Move);
 	}
 	
 	DrawDebugString(GetWorld(), FVector(0, 0, 100), GetEnumText(GetLocalRole()), this,
 		FColor::Purple, DeltaTime);
 }
 
-void AGoKart::OnRep_ReplicatedTransform()
+void AGoKart::OnRep_ServerState()
 {
 	// 클라이언트는 복제된 위치를 받아다 새로 설정한다.
-	SetActorTransform(ReplicatedTransform);
+	SetActorTransform(ServerState.Transform);
+	Velocity = ServerState.Velocity;
+}
+
+
+void AGoKart::SimulateMove(FGoKartMove Move)
+{
+	FVector Force = GetActorForwardVector() * MaxDrivingForce * Move.Throttle;
+
+	Force += GetAirResistance();
+	Force += GetRollingResistance();
+
+	FVector Acceleration = Force / Mass;
+
+	Velocity = Velocity + Acceleration * Move.DeltaTime;
+
+	ApplyRotation(Move.DeltaTime, Move.SteeringThrow);
+
+	UpdateLocationFromVelocity(Move.DeltaTime);
 }
 
 FVector AGoKart::GetAirResistance()
@@ -97,10 +110,10 @@ FVector AGoKart::GetRollingResistance()
 }
 
 
-void AGoKart::ApplyRotation(float DeltaTime)
+void AGoKart::ApplyRotation(float DeltaTime, float InSteeringThrow)
 {
 	float DeltaLocation = FVector::DotProduct(GetActorForwardVector(), Velocity) * DeltaTime;
-	float RotationAngle = DeltaLocation / MinTurningRadius * SteeringThrow;
+	float RotationAngle = DeltaLocation / MinTurningRadius * InSteeringThrow;
 	FQuat RotationDelta(GetActorUpVector(), RotationAngle);
 
 	Velocity = RotationDelta.RotateVector(Velocity);
@@ -125,14 +138,12 @@ void AGoKart::MoveForward(float Value)
 	// 클라이언트에서 내가 변경하고,
 	Throttle = Value;
 
-	// 서버에게 요청한다.
-	Server_MoveForward(Value);
+	// 서버에게 요청한다.(Tick에서)
 }
 
 void AGoKart::MoveRight(float Value)
 {
 	SteeringThrow = Value;
-	Server_MoveRight(Value);
 }
 
 // Called to bind functionality to input
@@ -144,29 +155,26 @@ void AGoKart::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 
 }
 
-// MoveForward를 클라에서 호출 시 서버에서 진짜로 실행하는 함수
-void AGoKart::Server_MoveForward_Implementation(float Value)
+// SendMove를 클라에서 호출 시 서버에서 진짜로 실행하는 함수
+void AGoKart::Server_SendMove_Implementation(FGoKartMove Move)
 {
 	// 서버에서 스로틀을 받아와 Tick에서 계산 후 위치를 업데이트 하는데,
 	// 서버의 delta time 과 클라이언트의 deltatime은 다르게 흐르기 때문에
 	// 위치가 점점 오류가 발생한다.
-	Throttle = Value;
+
+	SimulateMove(Move);
+	// 서버면 위치를 복제하여 클라이언트로 전송한다.
+	ServerState.LastMove = Move;
+	ServerState.Transform = GetActorTransform();
+	ServerState.Velocity = Velocity;
+	// TODO : Update Last Move
+	//
+	// Throttle = Move.Throttle;
+	// SteeringThrow = Move.SteeringThrow;
 }
 
 // 치트방지를 위해 입력값을 검증한다
-bool AGoKart::Server_MoveForward_Validate(float Value)
+bool AGoKart::Server_SendMove_Validate(FGoKartMove Move)
 {
-	return FMath::Abs(Value) <= 1;
-}
-
-// MoveRight를 클라에서 호출 시 서버에서 진짜로 실행하는 함수
-void AGoKart::Server_MoveRight_Implementation(float Value)
-{
-	SteeringThrow = Value;
-}
-
-// 치트방지를 위해 입력값을 검증한다
-bool AGoKart::Server_MoveRight_Validate(float Value)
-{
-	return  FMath::Abs(Value) <= 1;
+	return true; // TODO : Make Better Validation
 }

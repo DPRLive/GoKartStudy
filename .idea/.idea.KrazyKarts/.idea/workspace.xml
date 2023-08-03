@@ -10,6 +10,7 @@
     <list default="true" id="b864a737-47ab-4b01-acec-e732955cf57d" name="변경" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.KrazyKarts/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.KrazyKarts/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Config/DefaultEngine.ini" beforeDir="false" afterPath="$PROJECT_DIR$/Config/DefaultEngine.ini" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Content/KrazyKart/BP_GoKart.uasset" beforeDir="false" afterPath="$PROJECT_DIR$/Content/KrazyKart/BP_GoKart.uasset" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/KrazyKarts/GoKart.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/Source/KrazyKarts/GoKart.cpp" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Source/KrazyKarts/GoKart.h" beforeDir="false" afterPath="$PROJECT_DIR$/Source/KrazyKarts/GoKart.h" afterDir="false" />
     </list>
@@ -114,7 +115,8 @@
       <updated>1690872027784</updated>
       <workItem from="1690872029542" duration="1000" />
       <workItem from="1690878615324" duration="4511000" />
-      <workItem from="1690958966589" duration="8337000" />
+      <workItem from="1690958966589" duration="8571000" />
+      <workItem from="1691037858024" duration="8596000" />
     </task>
     <servers />
   </component>
