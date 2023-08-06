@@ -5,8 +5,6 @@
 #include "Components/InputComponent.h"
 
 #include "Engine/World.h"
-#include "GameFramework/GameState.h"
-#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 
 FString GetEnumText(ENetRole Role)
@@ -33,6 +31,8 @@ AGoKart::AGoKart()
 	PrimaryActorTick.bCanEverTick = true;
 
 	bReplicates = true;
+
+	MovementComponent = CreateDefaultSubobject<UGoKartMovementComponent>(TEXT("MovementComponent"));
 }
 
 // Called when the game starts or when spawned
@@ -57,12 +57,15 @@ void AGoKart::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if(MovementComponent == nullptr)
+		return;
+	
 	if( GetLocalRole() == ROLE_AutonomousProxy )
 	{
-		FGoKartMove Move = CreateMove(DeltaTime);
+		FGoKartMove Move = MovementComponent->CreateMove(DeltaTime);
 
 		// 나는 move를 시뮬레이트한다
-		SimulateMove(Move);
+		MovementComponent->SimulateMove(Move);
 		
 		UnacknowledgedMoves.Add(Move);
 		Server_SendMove(Move); // 서버에게 새로 만든 move를 보낸다
@@ -70,13 +73,13 @@ void AGoKart::Tick(float DeltaTime)
 	// we are the server and in control of the pawn
 	if( GetLocalRole() == ROLE_Authority && IsLocallyControlled())
 	{
-		FGoKartMove Move = CreateMove(DeltaTime);
+		FGoKartMove Move = MovementComponent->CreateMove(DeltaTime);
 		Server_SendMove(Move);
 	}
 
 	if( GetLocalRole() == ROLE_SimulatedProxy )
 	{
-		SimulateMove(ServerState.LastMove);
+		MovementComponent->SimulateMove(ServerState.LastMove);
 	}
 	
 	DrawDebugString(GetWorld(), FVector(0, 0, 100), GetEnumText(GetLocalRole()), this,
@@ -85,44 +88,19 @@ void AGoKart::Tick(float DeltaTime)
 
 void AGoKart::OnRep_ServerState()
 {
+	if(MovementComponent == nullptr)
+		return;
+	
 	// 클라이언트는 복제된 위치를 받아다 새로 설정한다.
 	SetActorTransform(ServerState.Transform);
-	Velocity = ServerState.Velocity;
+	MovementComponent->SetVelocity(ServerState.Velocity);
 
 	ClearAcknowledgeMoves(ServerState.LastMove);
 
 	for (const FGoKartMove& Move : UnacknowledgedMoves)
 	{
-		SimulateMove(Move);
+		MovementComponent->SimulateMove(Move);
 	}
-}
-
-
-void AGoKart::SimulateMove(const FGoKartMove& Move)
-{
-	FVector Force = GetActorForwardVector() * MaxDrivingForce * Move.Throttle;
-
-	Force += GetAirResistance();
-	Force += GetRollingResistance();
-
-	FVector Acceleration = Force / Mass;
-
-	Velocity = Velocity + Acceleration * Move.DeltaTime;
-
-	ApplyRotation(Move.DeltaTime, Move.SteeringThrow);
-
-	UpdateLocationFromVelocity(Move.DeltaTime);
-}
-
-FGoKartMove AGoKart::CreateMove(float DeltaTime)
-{
-	FGoKartMove Move;
-	Move.DeltaTime = DeltaTime; // 설정된 정보들을 담아
-	Move.SteeringThrow = SteeringThrow;
-	Move.Throttle = Throttle;
-	Move.Time = UGameplayStatics::GetGameState(GetWorld())->GetServerWorldTimeSeconds(); // 게임 시간
-	
-	return Move;
 }
 
 void AGoKart::ClearAcknowledgeMoves(FGoKartMove LastMove)
@@ -140,53 +118,23 @@ void AGoKart::ClearAcknowledgeMoves(FGoKartMove LastMove)
 	UnacknowledgedMoves = NewMoves;
 }
 
-FVector AGoKart::GetAirResistance()
-{
-	return - Velocity.GetSafeNormal() * Velocity.SizeSquared() * DragCoefficient;
-}
-
-FVector AGoKart::GetRollingResistance()
-{
-	float AccelerationDueToGravity = -GetWorld()->GetGravityZ() / 100;
-	float NormalForce = Mass * AccelerationDueToGravity;
-	return -Velocity.GetSafeNormal() * RollingResistanceCoefficient * NormalForce;
-}
-
-
-void AGoKart::ApplyRotation(float DeltaTime, float InSteeringThrow)
-{
-	float DeltaLocation = FVector::DotProduct(GetActorForwardVector(), Velocity) * DeltaTime;
-	float RotationAngle = DeltaLocation / MinTurningRadius * InSteeringThrow;
-	FQuat RotationDelta(GetActorUpVector(), RotationAngle);
-
-	Velocity = RotationDelta.RotateVector(Velocity);
-
-	AddActorWorldRotation(RotationDelta);
-}
-
-void AGoKart::UpdateLocationFromVelocity(float DeltaTime)
-{
-	FVector Translation = Velocity * 100 * DeltaTime;
-
-	FHitResult Hit;
-	AddActorWorldOffset(Translation, true, &Hit);
-	if (Hit.IsValidBlockingHit())
-	{
-		Velocity = FVector::ZeroVector;
-	}
-}
-
 void AGoKart::MoveForward(float Value)
 {
+	if(MovementComponent == nullptr)
+		return;
+	
 	// 클라이언트에서 내가 변경하고,
-	Throttle = Value;
+	MovementComponent->SetThrottle(Value);
 
 	// 서버에게 요청한다.(Tick에서)
 }
 
 void AGoKart::MoveRight(float Value)
 {
-	SteeringThrow = Value;
+	if(MovementComponent == nullptr)
+		return;
+	
+	MovementComponent->SetSteeringThrow(Value);
 }
 
 // Called to bind functionality to input
@@ -205,11 +153,14 @@ void AGoKart::Server_SendMove_Implementation(FGoKartMove Move)
 	// 서버의 delta time 과 클라이언트의 deltatime은 다르게 흐르기 때문에
 	// 위치가 점점 오류가 발생한다.
 
-	SimulateMove(Move);
+	if(MovementComponent == nullptr)
+		return;
+	
+	MovementComponent->SimulateMove(Move);
 	// 서버면 위치를 복제하여 클라이언트로 전송한다.
 	ServerState.LastMove = Move;
 	ServerState.Transform = GetActorTransform();
-	ServerState.Velocity = Velocity;
+	ServerState.Velocity = MovementComponent->GetVelocity();
 	// TODO : Update Last Move
 	//
 	// Throttle = Move.Throttle;
