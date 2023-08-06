@@ -5,6 +5,8 @@
 #include "Components/InputComponent.h"
 
 #include "Engine/World.h"
+#include "GameFramework/GameState.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 
 FString GetEnumText(ENetRole Role)
@@ -55,18 +57,26 @@ void AGoKart::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	if(IsLocallyControlled()) // 로컬이라면
+	if( GetLocalRole() == ROLE_AutonomousProxy )
 	{
-		FGoKartMove Move;
-		Move.DeltaTime = DeltaTime; // 설정된 정보들을 담아
-		Move.SteeringThrow = SteeringThrow;
-		Move.Throttle = Throttle;
-		// TODO : SetTime
+		FGoKartMove Move = CreateMove(DeltaTime);
 
-		Server_SendMove(Move); // 서버에게 새로 만든 move를 보낸다
-		
 		// 나는 move를 시뮬레이트한다
 		SimulateMove(Move);
+		
+		UnacknowledgedMoves.Add(Move);
+		Server_SendMove(Move); // 서버에게 새로 만든 move를 보낸다
+	}
+	// we are the server and in control of the pawn
+	if( GetLocalRole() == ROLE_Authority && IsLocallyControlled())
+	{
+		FGoKartMove Move = CreateMove(DeltaTime);
+		Server_SendMove(Move);
+	}
+
+	if( GetLocalRole() == ROLE_SimulatedProxy )
+	{
+		SimulateMove(ServerState.LastMove);
 	}
 	
 	DrawDebugString(GetWorld(), FVector(0, 0, 100), GetEnumText(GetLocalRole()), this,
@@ -78,10 +88,17 @@ void AGoKart::OnRep_ServerState()
 	// 클라이언트는 복제된 위치를 받아다 새로 설정한다.
 	SetActorTransform(ServerState.Transform);
 	Velocity = ServerState.Velocity;
+
+	ClearAcknowledgeMoves(ServerState.LastMove);
+
+	for (const FGoKartMove& Move : UnacknowledgedMoves)
+	{
+		SimulateMove(Move);
+	}
 }
 
 
-void AGoKart::SimulateMove(FGoKartMove Move)
+void AGoKart::SimulateMove(const FGoKartMove& Move)
 {
 	FVector Force = GetActorForwardVector() * MaxDrivingForce * Move.Throttle;
 
@@ -95,6 +112,32 @@ void AGoKart::SimulateMove(FGoKartMove Move)
 	ApplyRotation(Move.DeltaTime, Move.SteeringThrow);
 
 	UpdateLocationFromVelocity(Move.DeltaTime);
+}
+
+FGoKartMove AGoKart::CreateMove(float DeltaTime)
+{
+	FGoKartMove Move;
+	Move.DeltaTime = DeltaTime; // 설정된 정보들을 담아
+	Move.SteeringThrow = SteeringThrow;
+	Move.Throttle = Throttle;
+	Move.Time = UGameplayStatics::GetGameState(GetWorld())->GetServerWorldTimeSeconds(); // 게임 시간
+	
+	return Move;
+}
+
+void AGoKart::ClearAcknowledgeMoves(FGoKartMove LastMove)
+{
+	TArray<FGoKartMove> NewMoves;
+
+	for (const FGoKartMove& Move : UnacknowledgedMoves)
+	{
+		if(Move.Time > LastMove.Time)
+		{
+			NewMoves.Add(Move);
+		}
+	}
+
+	UnacknowledgedMoves = NewMoves;
 }
 
 FVector AGoKart::GetAirResistance()
