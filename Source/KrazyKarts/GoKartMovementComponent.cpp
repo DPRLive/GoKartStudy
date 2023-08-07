@@ -30,10 +30,14 @@ void UGoKartMovementComponent::BeginPlay()
 void UGoKartMovementComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	// ...
+	
+	if( Cast<APawn>(GetOwner())->IsLocallyControlled() )
+	{
+		LastMove = CreateMove(DeltaTime);
+		// 나는 move를 시뮬레이트한다
+		SimulateMove(LastMove);
+	}
 }
-
 
 void UGoKartMovementComponent::SimulateMove(const FGoKartMove& Move)
 {
