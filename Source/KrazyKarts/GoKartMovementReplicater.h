@@ -22,6 +22,26 @@ struct FGoKartState
 	FGoKartMove LastMove;
 };
 
+struct FHermiteCubicSpline
+{
+	FVector StartLocation,
+	StartDerivative,
+	TargetLocation,
+	TargetDerivative;
+
+	FVector InterpolateLocation(float LerpRatio) const
+	{
+		// Cubic Interp : 두 지점에 기울기를 같이 제공하여 두 점 사이를 3차 함수 형태로 보간을 진행? -> 더욱 매끄러운 보간이 가능.?
+		return FMath::CubicInterp(StartLocation, StartDerivative, TargetLocation, TargetDerivative, LerpRatio);
+	}
+	FVector InterpolateDerivative(float LerpRatio) const
+	{
+		// 해당 지점에서의 기울기 또는 도함수 제공
+		return FMath::CubicInterpDerivative(StartLocation, StartDerivative, TargetLocation, TargetDerivative, LerpRatio);
+	}
+	
+};
+
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class KRAZYKARTS_API UGoKartMovementReplicater : public UActorComponent
 {
@@ -46,6 +66,16 @@ private:
 
 	void ClientTick(float DeltaTime);
 	
+	FHermiteCubicSpline CreateSpline();
+
+	void InterpolateLocation(const FHermiteCubicSpline& Spline, float LerpRatio);
+
+	void InterpolateVelocity(const FHermiteCubicSpline& Spline, float LerpRatio);
+
+	void InterpolateRotation(float LerpRatio);
+	
+	float VelocityToDerivative();
+	
 	// (_Implementation을)서버에서 실행하라고 요청하는 RPC, 클라이언트에서 실행
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SendMove(FGoKartMove Move);
@@ -65,7 +95,18 @@ private:
 	float ClientTimeSinceUpdate;
 	float ClientTimeBetweenLastUpdates;
 	FTransform ClientStartTransform;
+	FVector ClientStartVelocity;
 
+	float ClientSimulatedTime;
+	
 	UPROPERTY()
 	UGoKartMovementComponent* MovementComponent;
+
+	// 서버에서의 신뢰성 있는 collision 판정을 위해,
+	// 보간은 mesh offset root만 하고 collision은 서버에서의 신뢰된 위치로만 업데이트
+	UPROPERTY()
+	USceneComponent* MeshOffsetRoot;
+
+	UFUNCTION(BlueprintCallable)
+	void SetMeshOffsetRoot(USceneComponent* Root) { MeshOffsetRoot = Root;}
 };

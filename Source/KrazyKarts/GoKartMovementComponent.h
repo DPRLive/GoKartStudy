@@ -23,6 +23,12 @@ struct FGoKartMove
 
 	UPROPERTY()
 	float Time;
+
+	// 치트방지를 위해 입력값을 검증한다
+	bool IsValid() const
+	{
+		return FMath::Abs(Throttle) <= 1 && FMath::Abs(SteeringThrow) <= 1;
+	}
 };
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )

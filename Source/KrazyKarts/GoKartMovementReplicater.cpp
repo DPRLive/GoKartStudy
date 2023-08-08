@@ -2,6 +2,7 @@
 
 
 #include "GoKartMovementReplicater.h"
+#include <GameFramework/Actor.h>
 #include "Net/UnrealNetwork.h"
 
 // Sets default values for this component's properties
@@ -75,26 +76,70 @@ void UGoKartMovementReplicater::ClientTick(float DeltaTime)
 	if(ClientTimeBetweenLastUpdates < KINDA_SMALL_NUMBER)
 		return;
 
+	if(MovementComponent == nullptr)
+		return;
+	
 	// 마지막 업데이트가 된 두 사이 시간을 알고 있다
 	// 그 시간안에 내가 원하는 목표로 이동해야함
 	// 그래서
 	// 마지막 업데이트 후 지난 시간 / 그 사이 시간
 	// 인건가?
-	FVector TargetLocation = ServerState.Transform.GetLocation();
+
 	float LerpRatio = ClientTimeSinceUpdate / ClientTimeBetweenLastUpdates;
-	FVector StartLocation = ClientStartTransform.GetLocation();
 
-	FVector NewLocation = FMath::LerpStable(StartLocation, TargetLocation, LerpRatio);
+	FHermiteCubicSpline Spline = CreateSpline();
+	
+	InterpolateLocation(Spline, LerpRatio);
+	
+	InterpolateVelocity(Spline, LerpRatio);
 
-	GetOwner()->SetActorLocation(NewLocation);
+	InterpolateRotation(LerpRatio);
+}
 
+FHermiteCubicSpline UGoKartMovementReplicater::CreateSpline()
+{
+	FHermiteCubicSpline Spline;
+	Spline.TargetLocation = ServerState.Transform.GetLocation();
+	Spline.StartLocation = ClientStartTransform.GetLocation();
+	Spline.StartDerivative = ClientStartVelocity * VelocityToDerivative();
+	Spline.TargetDerivative = ServerState.Velocity * VelocityToDerivative();
+
+	return Spline;
+}
+
+void UGoKartMovementReplicater::InterpolateLocation(const FHermiteCubicSpline& Spline, float LerpRatio)
+{
+	FVector NewLocation = Spline.InterpolateLocation(LerpRatio);
+	if(MeshOffsetRoot != nullptr)
+	{
+		MeshOffsetRoot->SetWorldLocation(NewLocation);
+	}
+}
+
+void UGoKartMovementReplicater::InterpolateVelocity(const FHermiteCubicSpline& Spline, float LerpRatio)
+{
+	FVector NewDerivative = Spline.InterpolateDerivative(LerpRatio);
+	FVector NewVelocity = NewDerivative / VelocityToDerivative();
+	MovementComponent->SetVelocity(NewVelocity);
+}
+
+void UGoKartMovementReplicater::InterpolateRotation(float LerpRatio)
+{
 	// 회전은 사원수.. 써야겠지?
 	FQuat TargetRotation = ServerState.Transform.GetRotation();
 	FQuat StartRotation = ClientStartTransform.GetRotation();
 
 	FQuat NewRotation = FQuat::Slerp(StartRotation, TargetRotation, LerpRatio);
 
-	GetOwner()->SetActorRotation(NewRotation);
+	if(MeshOffsetRoot != nullptr)
+	{
+		MeshOffsetRoot->SetWorldRotation(NewRotation);
+	}
+}
+
+float UGoKartMovementReplicater::VelocityToDerivative()
+{
+	return ClientTimeBetweenLastUpdates * 100;  // 속도가 m/s니까 단위 변경
 }
 
 void UGoKartMovementReplicater::OnRep_ServerState()
@@ -131,10 +176,21 @@ void UGoKartMovementReplicater::AutonomousProxy_OnRep_ServerState()
 
 void UGoKartMovementReplicater::SimulatedProxy_OnRep_ServerState()
 {
+	if(MovementComponent == nullptr)
+		return;
+	
 	ClientTimeBetweenLastUpdates = ClientTimeSinceUpdate;
 	ClientTimeSinceUpdate = 0;
 
-	ClientStartTransform = GetOwner()->GetActorTransform();
+	if(MeshOffsetRoot != nullptr)
+	{
+		ClientStartTransform.SetLocation(MeshOffsetRoot->GetComponentLocation());
+		ClientStartTransform.SetRotation(MeshOffsetRoot->GetComponentQuat());
+	}
+	
+	ClientStartVelocity = MovementComponent->GetVelocity();
+
+	GetOwner()->SetActorTransform(ServerState.Transform);
 }
 
 void UGoKartMovementReplicater::ClearAcknowledgeMoves(FGoKartMove LastMove)
@@ -161,6 +217,8 @@ void UGoKartMovementReplicater::Server_SendMove_Implementation(FGoKartMove Move)
 
 	if(MovementComponent == nullptr)
 		return;
+
+	ClientSimulatedTime += Move.DeltaTime;
 	
 	MovementComponent->SimulateMove(Move);
 	UpdateServerState(Move);
@@ -169,5 +227,18 @@ void UGoKartMovementReplicater::Server_SendMove_Implementation(FGoKartMove Move)
 // 치트방지를 위해 입력값을 검증한다
 bool UGoKartMovementReplicater::Server_SendMove_Validate(FGoKartMove Move)
 {
-	return true; // TODO : Make Better Validation
+	float ProposedTime = ClientSimulatedTime + Move.DeltaTime;
+	bool ClientNotRunningAhead = ProposedTime < GetWorld()->TimeSeconds;
+
+	if(!ClientNotRunningAhead)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Client is too fast"));
+		return false;
+	}
+	if(!Move.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Received invalid move."));
+		return false;
+	}
+	return true;
 }
